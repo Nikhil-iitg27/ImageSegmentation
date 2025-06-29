@@ -1,0 +1,10 @@
+# requirements.txt
+# Core dependencies for Mask2Former traffic image segmentation project
+
+torch
+transformers
+torchvision
+Pillow
+numpy
+matplotlib
+opencv-python
