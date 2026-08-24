@@ -117,7 +117,10 @@ def main() -> None:
                     if isinstance(mask, Image.Image):
                         mask = mask.resize(IMAGE_SIZE, resample=Image.NEAREST)
                     else:
-                        mask = Image.fromarray(mask).resize(IMAGE_SIZE, resample=Image.NEAREST)
+                        # Cast to uint8 before Image.fromarray: label ids are 0-39 (fits
+                        # comfortably), and Image.fromarray on the raw int32 array would pick
+                        # 32-bit "I" mode, which Pillow is deprecating for PNG output.
+                        mask = Image.fromarray(mask.astype(np.uint8)).resize(IMAGE_SIZE, resample=Image.NEAREST)
                     img.save(os.path.join(split_img_dir, f"img_{i:05d}.png"))
                     mask.save(os.path.join(split_mask_dir, f"mask_{i:05d}.png"))
                 except Exception as e:

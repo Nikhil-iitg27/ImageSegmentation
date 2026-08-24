@@ -1,52 +1,108 @@
 # src/evaluate.py
 """
-Evaluation metrics and visualization for Mask2Former traffic image segmentation.
+Evaluation metrics for Mask2Former traffic image segmentation.
+Mirrors notebooks/Project.ipynb cell 67: per-class Dice, F1 (beta=0.5), and IoU, averaged across
+classes, computed against the model's post-processed semantic segmentation maps.
 """
 
-
-
 import torch
-import numpy as np
 import logging
-from src.utils import plot_sample
-from src.config import ADE_MEAN, ADE_STD
+from src.dataset import build_preprocessor
+from src.config import DEVICE
 
-def compute_iou(pred_mask, true_mask, num_classes):
-    ious = []
-    pred_mask = pred_mask.cpu().numpy().flatten()
-    true_mask = true_mask.cpu().numpy().flatten()
-    for cls in range(num_classes):
-        pred_inds = pred_mask == cls
-        target_inds = true_mask == cls
-        intersection = (pred_inds & target_inds).sum()
-        union = (pred_inds | target_inds).sum()
-        if union == 0:
-            ious.append(float('nan'))
-        else:
-            ious.append(intersection / union)
-    return np.nanmean(ious)
+_preprocessor = build_preprocessor()
 
-def evaluate_model(model, dataloader, num_classes, device):
+
+def compute_dice_f1_iou_for_classes(pred_map, gt_map, beta=0.5, num_classes=None):
     """
-    Evaluates the model on a dataloader and prints mean IoU. Visualizes predictions.
-    Handles errors robustly.
+    Computes the Dice coefficient, F1 score (beta), and IoU per class between a predicted and
+    ground-truth segmentation map, then averages across classes.
+
+    Matches notebook cell 67's compute_dice_f1_iou_for_classes exactly, INCLUDING its quirk of
+    excluding classes that score exactly 0 from the mean (rather than counting them as 0). That
+    quirk is kept intentionally, not fixed, so numbers computed here are directly comparable to
+    the notebook's already-reported results (test Dice 0.5563, test F1 0.5412) rather than a
+    stricter but different metric.
+    """
+    if num_classes is None:
+        num_classes = max(pred_map.max().item(), gt_map.max().item()) + 1
+
+    dice_scores, f1_scores, iou_scores = [], [], []
+
+    for cls in range(num_classes):
+        pred_cls_mask = (pred_map == cls).float()
+        gt_cls_mask = (gt_map == cls).float()
+
+        intersection = (pred_cls_mask * gt_cls_mask).sum()
+        dice_coeff = (2 * intersection) / (pred_cls_mask.sum() + gt_cls_mask.sum() + 1e-8)
+
+        precision = intersection / (pred_cls_mask.sum() + 1e-8)
+        recall = intersection / (gt_cls_mask.sum() + 1e-8)
+        f1_score = (1 + beta ** 2) * (precision * recall) / (beta ** 2 * precision + recall + 1e-8)
+
+        union = pred_cls_mask.sum() + gt_cls_mask.sum() - intersection
+        iou = intersection / (union + 1e-8)
+
+        if dice_coeff.item() > 0:
+            dice_scores.append(dice_coeff.item())
+        if f1_score.item() > 0:
+            f1_scores.append(f1_score.item())
+        if iou.item() > 0:
+            iou_scores.append(iou.item())
+
+    mean_dice = sum(dice_scores) / len(dice_scores) if dice_scores else 0.0
+    mean_f1 = sum(f1_scores) / len(f1_scores) if f1_scores else 0.0
+    mean_iou = sum(iou_scores) / len(iou_scores) if iou_scores else 0.0
+
+    return mean_dice, mean_f1, mean_iou
+
+
+def evaluate_model(model, dataloader, max_batches=None, device=DEVICE):
+    """
+    Evaluates a CustomMask2Former model on a dataloader (see src.dataset.get_dataloader),
+    returning mean Dice, F1 (beta=0.5), and IoU averaged per-sample across the batches visited.
+
+    Predictions are produced via post_process_semantic_segmentation against each sample's
+    original (untransformed) resolution, matching notebook cell 67's evaluate_model(). Unlike the
+    old version of this file, this does not call plot_sample per sample — the notebook keeps
+    metric computation and visualization separate (visualization is its own function,
+    show_inference_samples, cell 73), and forcing a plt.show() per sample here would break on a
+    headless training environment (e.g. a RunPod pod with no display).
     """
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
     model.eval()
-    iou_scores = []
+    running_dice = running_f1 = running_iou = 0.0
+    num_samples = 0
+
     with torch.no_grad():
-        for batch in dataloader:
+        for idx, batch in enumerate(dataloader):
+            if max_batches and idx >= max_batches:
+                break
             try:
-                images = batch.transformed_image.to(device)
-                masks = batch.transformed_segmentation_map.to(device)
-                outputs = model(images).logits
-                preds = torch.argmax(outputs, dim=1)
-                for i in range(images.shape[0]):
-                    iou = compute_iou(preds[i], masks[i], num_classes)
-                    iou_scores.append(iou)
-                    plot_sample(batch.original_image[i], masks[i].cpu(), preds[i].cpu())
+                pixel_values = batch["pixel_values"].to(device)
+                outputs = model.predict(pixel_values)
+
+                original_images = batch["original_images"]
+                target_sizes = [(image.shape[0], image.shape[1]) for image in original_images]
+                predicted_segmentation_maps = _preprocessor.post_process_semantic_segmentation(
+                    outputs, target_sizes=target_sizes
+                )
+                ground_truth_segmentation_maps = batch["original_segmentation_maps"]
+
+                for pred_map, gt_map in zip(predicted_segmentation_maps, ground_truth_segmentation_maps):
+                    pred_map = pred_map.clone().detach().to(device)
+                    gt_map = torch.as_tensor(gt_map).to(device)
+
+                    dice, f1, iou = compute_dice_f1_iou_for_classes(pred_map, gt_map, beta=0.5)
+                    running_dice += dice
+                    running_f1 += f1
+                    running_iou += iou
+                    num_samples += 1
             except Exception as e:
-                logging.error(f"Error during evaluation batch: {e}")
-    mean_iou = np.nanmean(iou_scores) if iou_scores else float('nan')
-    logging.info(f"Mean IoU: {mean_iou:.4f}")
-    return mean_iou
+                logging.error(f"Error during evaluation batch {idx}: {e}")
+
+    mean_dice = running_dice / num_samples if num_samples else float('nan')
+    mean_f1 = running_f1 / num_samples if num_samples else float('nan')
+    mean_iou = running_iou / num_samples if num_samples else float('nan')
+    logging.info(f"Mean Dice: {mean_dice:.4f}, Mean F1 (beta=0.5): {mean_f1:.4f}, Mean IoU: {mean_iou:.4f}")
+    return {"mean_dice": mean_dice, "mean_f1": mean_f1, "mean_iou": mean_iou}

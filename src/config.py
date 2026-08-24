@@ -18,10 +18,28 @@ CHECKPOINT_DIR = os.path.join(MODEL_DIR, 'checkpoints')
 LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'logs')
 
 
+# Pretrained checkpoint (matches the base model actually finetuned in notebooks/Project.ipynb)
+PRETRAINED_CHECKPOINT = "facebook/mask2former-swin-large-ade-semantic"
+
+# Class labels (IIT-H driving dataset, 40 classes, matches id2label built in
+# notebooks/Project.ipynb from the dataset's Label metadata). Mask2Former adds its own
+# internal "no object" class on top of this at the model level.
+ID2LABEL = {
+    0: 'road', 1: 'parking', 2: 'drivable fallback', 3: 'sidewalk', 4: 'rail track',
+    5: 'non-drivable fallback', 6: 'person', 7: 'animal', 8: 'rider', 9: 'motorcycle',
+    10: 'bicycle', 11: 'autorickshaw', 12: 'car', 13: 'truck', 14: 'bus', 15: 'caravan',
+    16: 'trailer', 17: 'train', 18: 'vehicle fallback', 19: 'curb', 20: 'wall', 21: 'fence',
+    22: 'guard rail', 23: 'billboard', 24: 'traffic sign', 25: 'traffic light', 26: 'pole',
+    27: 'polegroup', 28: 'obs-str-bar-fallback', 29: 'building', 30: 'bridge', 31: 'tunnel',
+    32: 'vegetation', 33: 'sky', 34: 'fallback background', 35: 'unlabeled',
+    36: 'ego vehicle', 37: 'rectification border', 38: 'out of roi', 39: 'license plate',
+}
+LABEL2ID = {label: id_ for id_, label in ID2LABEL.items()}
+
 # Hyperparameters (update as needed)
-NUM_CLASSES = 21  # Set according to your dataset
+NUM_CLASSES = len(ID2LABEL)  # 40 — see ID2LABEL above; NOT the previous placeholder value of 21
 BATCH_SIZE = 8
-NUM_EPOCHS = 50
+NUM_EPOCHS = 5  # matches the notebook's documented baseline run (train_model(..., num_epochs=5))
 LEARNING_RATE = 5e-5
 IMAGE_SIZE = (512, 512)
 SEED = 42

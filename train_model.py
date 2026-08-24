@@ -3,9 +3,9 @@
 Script to train Mask2Former on traffic image segmentation data.
 """
 
-from src.train import train_model
-from src.config import PROCESSED_DATA_DIR
 import os
+from src.train import train_model
+from src.config import PROCESSED_DATA_DIR, MODEL_DIR
 
 def main():
     try:
@@ -16,8 +16,13 @@ def main():
         for d in [train_images, train_masks, val_images, val_masks]:
             if not os.path.isdir(d):
                 raise FileNotFoundError(f"Required directory not found: {d}")
-        model = train_model(train_images, train_masks, val_images, val_masks)
-        print("Training complete.")
+        model, history = train_model(train_images, train_masks, val_images, val_masks)
+
+        final_model_dir = os.path.join(MODEL_DIR, "finetuned")
+        os.makedirs(final_model_dir, exist_ok=True)
+        model.model.save_pretrained(final_model_dir)
+        print(f"Training complete. Final model saved to {final_model_dir}")
+        print(f"Per-epoch train loss: {history['loss']}")
     except Exception as e:
         print(f"Error in train_model.py: {e}")
 
