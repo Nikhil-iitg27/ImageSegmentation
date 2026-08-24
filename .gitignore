@@ -6,6 +6,6 @@ data.pkl
 docs/
 
 # generated pipeline output (reproducible from data/raw/data.pkl and training)
-data/processed/
+data/
 models/
 .venv/
