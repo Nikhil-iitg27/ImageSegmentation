@@ -4,8 +4,8 @@ Script to train Mask2Former on traffic image segmentation data.
 """
 
 import os
-from src.train import train_model
-from src.config import PROCESSED_DATA_DIR, MODEL_DIR
+from src.train import train_model, LATEST_CHECKPOINT_NAME
+from src.config import PROCESSED_DATA_DIR, MODEL_DIR, CHECKPOINT_DIR
 
 def main():
     try:
@@ -16,7 +16,15 @@ def main():
         for d in [train_images, train_masks, val_images, val_masks]:
             if not os.path.isdir(d):
                 raise FileNotFoundError(f"Required directory not found: {d}")
-        model, history = train_model(train_images, train_masks, val_images, val_masks)
+
+        # Auto-resume: if a previous run was interrupted (pod preemption, crash, etc.) and left
+        # a checkpoint_latest.pth behind, pick up from there instead of starting over.
+        latest_checkpoint = os.path.join(CHECKPOINT_DIR, LATEST_CHECKPOINT_NAME)
+        resume_from = latest_checkpoint if os.path.isfile(latest_checkpoint) else None
+        if resume_from:
+            print(f"Found existing checkpoint at {resume_from} -- resuming training from there.")
+
+        model, history = train_model(train_images, train_masks, val_images, val_masks, resume_from=resume_from)
 
         final_model_dir = os.path.join(MODEL_DIR, "finetuned")
         os.makedirs(final_model_dir, exist_ok=True)

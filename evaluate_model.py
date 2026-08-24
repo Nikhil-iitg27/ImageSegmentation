@@ -2,32 +2,32 @@
 """
 Script to evaluate Mask2Former on traffic image segmentation data.
 
-Loads the latest checkpoint from CHECKPOINT_DIR (written per-epoch by src.train.train_model) if
-one exists. Without a checkpoint, this evaluates the freshly pretrained-but-not-finetuned model
-(random class head) and logs a warning, rather than silently reporting meaningless metrics as
-though they came from a trained model.
+Loads a checkpoint from CHECKPOINT_DIR (written by src.train.train_model) if one exists,
+preferring checkpoint_best.pth (highest validation Dice seen during training) over
+checkpoint_latest.pth (whatever epoch training last completed on -- only used as a fallback,
+e.g. if best.pth wasn't written yet because training was interrupted before any epoch improved
+on it). Without either, this evaluates the freshly pretrained-but-not-finetuned model (random
+class head) and logs a warning, rather than silently reporting meaningless metrics as though
+they came from a trained model.
 """
 import os
-import glob
-import re
 import logging
 import torch
 from src.evaluate import evaluate_model
 from src.model.mask2former import CustomMask2Former
 from src.config import PROCESSED_DATA_DIR, BATCH_SIZE, DEVICE, ADE_MEAN, ADE_STD, CHECKPOINT_DIR
 from src.dataset import get_dataloader
+from src.train import LATEST_CHECKPOINT_NAME, BEST_CHECKPOINT_NAME
 
 
-def _latest_checkpoint(checkpoint_dir):
-    checkpoints = glob.glob(os.path.join(checkpoint_dir, "checkpoint_epoch_*.pth"))
-    if not checkpoints:
-        return None
-
-    def epoch_num(path):
-        match = re.search(r"checkpoint_epoch_(\d+)\.pth$", path)
-        return int(match.group(1)) if match else -1
-
-    return max(checkpoints, key=epoch_num)
+def _select_checkpoint(checkpoint_dir):
+    best = os.path.join(checkpoint_dir, BEST_CHECKPOINT_NAME)
+    if os.path.isfile(best):
+        return best
+    latest = os.path.join(checkpoint_dir, LATEST_CHECKPOINT_NAME)
+    if os.path.isfile(latest):
+        return latest
+    return None
 
 
 def main():
@@ -40,7 +40,7 @@ def main():
 
         model = CustomMask2Former().to(DEVICE)
 
-        checkpoint_path = _latest_checkpoint(CHECKPOINT_DIR)
+        checkpoint_path = _select_checkpoint(CHECKPOINT_DIR)
         if checkpoint_path:
             checkpoint = torch.load(checkpoint_path, map_location=DEVICE)
             model.load_state_dict(checkpoint["model_state_dict"])
