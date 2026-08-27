@@ -34,15 +34,20 @@ def train_model(
     num_epochs=NUM_EPOCHS,
     learning_rate=LEARNING_RATE,
     log_interval=100,
-    val_max_batches=6,
+    val_max_batches=None,
     resume_from=None,
     best_metric_key="mean_dice",
 ):
     """
     Trains Mask2Former for semantic segmentation, logs loss, validates each epoch, and
-    checkpoints. val_max_batches=6 matches notebook cell 67's per-epoch validation subset size
-    (the full validation set is only used for the final post-training evaluation, mirroring
-    cell 70 in evaluate_model.py).
+    checkpoints. val_max_batches=None (default) evaluates the FULL validation set every epoch --
+    deliberately diverging from the notebook's cell 67, which only checked a fixed 6-batch
+    (48-image, out of 135) subset per epoch for speed on a slower GPU. On real hardware (an
+    RTX 4090 run evaluated all 135 test images in ~10s) that tradeoff isn't worth it: with
+    shuffle=False on the val loader, "6 batches" was always the SAME 48 images, unaugmented,
+    every single epoch (verified against the actual DataLoader/sampler behavior, not assumed) --
+    a small, fixed, non-representative slice, not a periodic re-sample. Pass an int to restore
+    the old cheaper-but-partial behavior if the validation set is ever much larger.
 
     resume_from: path to a checkpoint (typically CHECKPOINT_DIR/checkpoint_latest.pth) to
     resume from -- restores model + optimizer state and continues from the next epoch, instead
