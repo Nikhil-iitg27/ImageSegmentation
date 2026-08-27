@@ -1,26 +1,24 @@
 # src/train.py
 """
 Training loop, validation, and checkpointing for Mask2Former traffic image segmentation.
-Mirrors the training procedure in notebooks/Project.ipynb (cell 67): uses the model's own
-built-in matching loss over mask_labels/class_labels (not per-pixel cross-entropy on a flat
-logits tensor), and validates each epoch on a fixed subset of the validation set.
+Uses the model's own built-in matching loss over mask_labels/class_labels.
 
 Only two checkpoint files are ever kept on disk: checkpoint_latest.pth (overwritten every
 epoch, used to resume an interrupted run) and checkpoint_best.pth (overwritten only when
-validation Dice improves, used for the final saved/published model). Per-epoch checkpoint
-files are not accumulated -- a full Mask2Former-Large state dict is large enough that keeping
-one per epoch is wasteful disk/transfer cost for no real benefit over latest+best.
+validation Dice improves, used for the final saved/published model) -- a full
+Mask2Former-Large state dict is large enough that per-epoch files aren't worth the disk cost.
 """
 
 import os
 import logging
+import datetime
 import torch
 from torch.optim import Adam
-from src.config import BATCH_SIZE, NUM_EPOCHS, LEARNING_RATE, DEVICE, CHECKPOINT_DIR, ADE_MEAN, ADE_STD
+from src.config import BATCH_SIZE, NUM_EPOCHS, LEARNING_RATE, DEVICE, CHECKPOINT_DIR, ADE_MEAN, ADE_STD, RESULTS_CSV
 from src.dataset import get_dataloader
 from src.model.mask2former import CustomMask2Former
 from src.evaluate import evaluate_model
-from src.utils import set_seed, save_checkpoint
+from src.utils import set_seed, save_checkpoint, append_result_row
 
 LATEST_CHECKPOINT_NAME = "checkpoint_latest.pth"
 BEST_CHECKPOINT_NAME = "checkpoint_best.pth"
@@ -40,26 +38,17 @@ def train_model(
 ):
     """
     Trains Mask2Former for semantic segmentation, logs loss, validates each epoch, and
-    checkpoints. val_max_batches=None (default) evaluates the FULL validation set every epoch --
-    deliberately diverging from the notebook's cell 67, which only checked a fixed 6-batch
-    (48-image, out of 135) subset per epoch for speed on a slower GPU. On real hardware (an
-    RTX 4090 run evaluated all 135 test images in ~10s) that tradeoff isn't worth it: with
-    shuffle=False on the val loader, "6 batches" was always the SAME 48 images, unaugmented,
-    every single epoch (verified against the actual DataLoader/sampler behavior, not assumed) --
-    a small, fixed, non-representative slice, not a periodic re-sample. Pass an int to restore
-    the old cheaper-but-partial behavior if the validation set is ever much larger.
+    checkpoints. val_max_batches=None (default) evaluates the full validation set every epoch;
+    pass an int to only check that many batches (cheaper, less representative).
 
     resume_from: path to a checkpoint (typically CHECKPOINT_DIR/checkpoint_latest.pth) to
-    resume from -- restores model + optimizer state and continues from the next epoch, instead
-    of starting over. Pass None (default) to train from the pretrained checkpoint as usual.
+    resume from -- restores model + optimizer state and continues from the next epoch.
 
     best_metric_key: which key of the per-epoch validation metrics dict ("mean_dice",
     "mean_f1", or "mean_iou") determines what counts as "best" for checkpoint_best.pth.
 
-    Returns (model, history) where model's weights are the BEST validation epoch seen (not
-    necessarily the last epoch trained) -- this is what train_model.py saves to
-    models/finetuned/, so the published model is the best-performing one, not just whatever
-    the training loop happened to end on.
+    Returns (model, history) where model's weights are the BEST validation epoch seen, not
+    necessarily the last epoch trained -- this is what train_model.py publishes.
     """
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
     set_seed()
@@ -70,19 +59,21 @@ def train_model(
 
     try:
         model = CustomMask2Former().to(DEVICE)
-        # freeze_pixel_level_module() already ran inside CustomMask2Former.__init__, so
-        # optimizer.parameters() below includes frozen params, but they never receive/apply
-        # gradients (matches notebook cell 67, which also passes model.parameters() unfiltered).
+        # Frozen params are still in model.parameters(), but never receive/apply gradients.
         optimizer = Adam(model.parameters(), lr=learning_rate)
 
         start_epoch = 0
         best_metric_value = float('-inf')
+        # run_id ties every row this training lineage writes to results.csv together, including
+        # across resumes -- carried inside the checkpoint dict so no separate bookkeeping is needed.
+        run_id = datetime.datetime.now().strftime("run_%Y%m%d_%H%M%S")
         if resume_from:
             checkpoint = torch.load(resume_from, map_location=DEVICE)
             model.load_state_dict(checkpoint['model_state_dict'])
             optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             start_epoch = checkpoint['epoch']
-            logging.info(f"Resumed from {resume_from} at epoch {start_epoch}")
+            run_id = checkpoint.get('run_id', run_id)
+            logging.info(f"Resumed from {resume_from} at epoch {start_epoch} (run_id={run_id})")
             if os.path.isfile(best_path):
                 best_checkpoint = torch.load(best_path, map_location=DEVICE)
                 best_metric_value = best_checkpoint['val_metrics'][best_metric_key]
@@ -101,6 +92,7 @@ def train_model(
         model.train()
         running_loss = 0.0
         num_samples = 0
+        iter100_loss = None
         for idx, batch in enumerate(train_loader):
             try:
                 optimizer.zero_grad()
@@ -118,7 +110,8 @@ def train_model(
                 num_samples += batch_size
 
                 if idx % log_interval == 0 and idx > 0:
-                    logging.info(f"Iteration {idx} - loss: {running_loss / num_samples}")
+                    iter100_loss = running_loss / num_samples
+                    logging.info(f"Iteration {idx} - loss: {iter100_loss}")
             except Exception as e:
                 logging.error(f"Error during training batch {idx}: {e}")
 
@@ -135,6 +128,7 @@ def train_model(
 
         checkpoint_state = {
             'epoch': epoch + 1,
+            'run_id': run_id,
             'model_state_dict': model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
             'loss': epoch_loss,
@@ -142,10 +136,25 @@ def train_model(
         }
         save_checkpoint(checkpoint_state, latest_path)
 
-        if val_metrics[best_metric_key] > best_metric_value:
+        is_new_best = val_metrics[best_metric_key] > best_metric_value
+        if is_new_best:
             best_metric_value = val_metrics[best_metric_key]
             save_checkpoint(checkpoint_state, best_path)
             logging.info(f"New best {best_metric_key}={best_metric_value:.4f} -> saved {best_path}")
+
+        append_result_row({
+            "run_id": run_id,
+            "row_type": "epoch",
+            "epoch": epoch + 1,
+            "timestamp": datetime.datetime.now().isoformat(timespec="seconds"),
+            "iteration_100_loss": iter100_loss,
+            "epoch_end_train_loss": epoch_loss,
+            "mean_dice": val_metrics["mean_dice"],
+            "mean_f1_beta0.5": val_metrics["mean_f1"],
+            "mean_iou": val_metrics["mean_iou"],
+            "new_best_checkpoint": is_new_best,
+            "val_max_batches": val_max_batches if val_max_batches is not None else "full",
+        }, RESULTS_CSV)
 
     if os.path.isfile(best_path):
         best_checkpoint = torch.load(best_path, map_location=DEVICE)

@@ -26,9 +26,8 @@ class CustomMask2Former(nn.Module):
 
     def freeze_pixel_level_module(self):
         """
-        Freezes the backbone and pixel decoder (pixel_level_module), matching
-        notebooks/Project.ipynb cell 64: only the transformer decoder and MLP layer are
-        finetuned, so training stays resource-efficient.
+        Freezes the backbone and pixel decoder, leaving only the transformer decoder and MLP
+        layer trainable, for resource-efficient finetuning.
         """
         for param in self.model.model.pixel_level_module.parameters():
             param.requires_grad = False

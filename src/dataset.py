@@ -1,7 +1,6 @@
 # src/dataset.py
 """
 Dataset loading and Mask2Former-format batching for traffic image segmentation.
-Mirrors the preprocessing pipeline in notebooks/Project.ipynb (cell 37).
 """
 
 import os
@@ -24,13 +23,6 @@ class SegmentationTransform:
     """
     ToTensor + ADE-mean/std normalization, plus a single random horizontal flip applied
     identically to both the image and the mask (p=0.5) when is_train=True.
-
-    Note: the notebook's version (cell 37) applies torchvision's RandomHorizontalFlip to the
-    image alone *before* ToTensor, then separately re-flips image+mask together afterwards with
-    its own independent coin flip. Those two independent flips misalign image and mask in ~50%
-    of training samples (image flipped without the mask, or vice versa via flip-cancellation).
-    That is a correctness bug, not an intentional augmentation choice, so it is fixed here to a
-    single, always-aligned flip instead of being reproduced.
     """
 
     def __init__(self, mean=ADE_MEAN, std=ADE_STD, is_train=True):
@@ -46,9 +38,7 @@ class SegmentationTransform:
         if self.is_train and torch.rand(1) < 0.5:
             image = torch.flip(image, dims=[2])
             mask = torch.flip(mask, dims=[1])
-        # -1 is the "no polygon matched this pixel" sentinel produced by the raw-data
-        # conversion step; the notebook remaps it to the 'unlabeled' class (cell 37's dataset
-        # __getitem__ does the same on both original and transformed maps).
+        # -1 is the "no polygon matched this pixel" sentinel from raw-data conversion.
         mask[mask == -1] = UNLABELED_ID
         return image, mask
 
@@ -92,14 +82,10 @@ class SemanticSegmentationDataset(Dataset):
         return len(self.images)
 
     def __iter__(self):
-        # Without this, `for x in dataset` (used directly by prepare_data.py, not via
-        # DataLoader) falls back to Python's legacy sequence-iteration protocol: calling
-        # __getitem__(0), __getitem__(1), ... until IndexError. But __getitem__ below wraps
-        # every exception (including that natural end-of-sequence IndexError) into a
-        # RuntimeError, which that fallback protocol doesn't recognize as "stop" -- so it
-        # crashes at the last valid index instead of finishing. Explicit __iter__ bounded by
-        # __len__ sidesteps that entirely. DataLoader is unaffected (it uses an index-based
-        # sampler over range(len(dataset)), never relying on __iter__ or IndexError).
+        # Without this, direct iteration (`for x in dataset`, used by prepare_data.py) falls
+        # back to Python's legacy protocol of calling __getitem__(0), __getitem__(1), ... until
+        # IndexError -- but __getitem__ wraps every exception into a RuntimeError, which isn't
+        # recognized as "stop", so it crashes instead of finishing cleanly.
         for idx in range(len(self)):
             yield self[idx]
 
@@ -129,9 +115,8 @@ class SemanticSegmentationDataset(Dataset):
 
 def build_preprocessor(ignore_index: int = 0) -> Mask2FormerImageProcessor:
     """
-    Shared factory for the Mask2FormerImageProcessor used both to build training/eval batches
-    (Mask2FormerCollator, below) and to post-process model outputs back into semantic maps
-    (src.evaluate). Keeping one definition avoids the two call sites silently drifting apart.
+    Shared factory for the Mask2FormerImageProcessor, used both to build training/eval batches
+    (Mask2FormerCollator, below) and to post-process model outputs (src.evaluate).
     """
     return Mask2FormerImageProcessor(
         ignore_index=ignore_index,
@@ -147,13 +132,11 @@ class Mask2FormerCollator:
     Batches a list of SegmentationDataInput into the format Mask2Former expects for training
     and evaluation: pixel_values, pixel_mask, mask_labels, class_labels, plus the untransformed
     original_images/original_segmentation_maps (needed for metric computation against
-    full-resolution ground truth). Mirrors notebooks/Project.ipynb cell 37's collate_fn.
+    full-resolution ground truth).
 
-    ignore_index=0 matches the notebook's Mask2FormerImageProcessor call exactly: pixels labeled
-    class 0 ('road') are treated as the ignored/background class when building per-class mask and
-    class labels, i.e. 'road' does not get its own predicted-mask query. This is a real modeling
-    choice already present in the notebook (road dominates most pixels in these scenes), not a
-    bug introduced here — preserved for consensus with the notebook's behavior.
+    ignore_index=0: pixels labeled class 0 ('road') are treated as the ignored/background class
+    when building per-class mask and class labels, i.e. 'road' does not get its own
+    predicted-mask query (road dominates most pixels in these scenes).
     """
     def __init__(self, ignore_index: int = 0):
         self.preprocessor = build_preprocessor(ignore_index)

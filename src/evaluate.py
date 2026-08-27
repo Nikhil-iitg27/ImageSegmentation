@@ -1,8 +1,8 @@
 # src/evaluate.py
 """
-Evaluation metrics for Mask2Former traffic image segmentation.
-Mirrors notebooks/Project.ipynb cell 67: per-class Dice, F1 (beta=0.5), and IoU, averaged across
-classes, computed against the model's post-processed semantic segmentation maps.
+Evaluation metrics for Mask2Former traffic image segmentation: per-class Dice, F1 (beta=0.5),
+and IoU, averaged across classes, computed against the model's post-processed semantic
+segmentation maps.
 """
 
 import torch
@@ -18,11 +18,8 @@ def compute_dice_f1_iou_for_classes(pred_map, gt_map, beta=0.5, num_classes=None
     Computes the Dice coefficient, F1 score (beta), and IoU per class between a predicted and
     ground-truth segmentation map, then averages across classes.
 
-    Matches notebook cell 67's compute_dice_f1_iou_for_classes exactly, INCLUDING its quirk of
-    excluding classes that score exactly 0 from the mean (rather than counting them as 0). That
-    quirk is kept intentionally, not fixed, so numbers computed here are directly comparable to
-    the notebook's already-reported results (test Dice 0.5563, test F1 0.5412) rather than a
-    stricter but different metric.
+    Note: classes that score exactly 0 are excluded from the mean rather than counted as 0 --
+    this inflates the reported average relative to a strict per-class mean.
     """
     if num_classes is None:
         num_classes = max(pred_map.max().item(), gt_map.max().item()) + 1
@@ -63,11 +60,8 @@ def evaluate_model(model, dataloader, max_batches=None, device=DEVICE):
     returning mean Dice, F1 (beta=0.5), and IoU averaged per-sample across the batches visited.
 
     Predictions are produced via post_process_semantic_segmentation against each sample's
-    original (untransformed) resolution, matching notebook cell 67's evaluate_model(). Unlike the
-    old version of this file, this does not call plot_sample per sample — the notebook keeps
-    metric computation and visualization separate (visualization is its own function,
-    show_inference_samples, cell 73), and forcing a plt.show() per sample here would break on a
-    headless training environment (e.g. a RunPod pod with no display).
+    original (untransformed) resolution. Deliberately doesn't plot anything per sample -- that
+    would break on a headless training environment (e.g. a RunPod pod with no display).
     """
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
     model.eval()

@@ -17,8 +17,7 @@ def main():
             if not os.path.isdir(d):
                 raise FileNotFoundError(f"Required directory not found: {d}")
 
-        # Auto-resume: if a previous run was interrupted (pod preemption, crash, etc.) and left
-        # a checkpoint_latest.pth behind, pick up from there instead of starting over.
+        # Auto-resume from a leftover checkpoint (e.g. after an interruption) instead of restarting.
         latest_checkpoint = os.path.join(CHECKPOINT_DIR, LATEST_CHECKPOINT_NAME)
         resume_from = latest_checkpoint if os.path.isfile(latest_checkpoint) else None
         if resume_from:

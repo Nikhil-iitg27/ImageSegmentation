@@ -29,10 +29,8 @@ def main() -> None:
     """
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
     try:
-        # Ensure processed data directory exists
         os.makedirs(PROCESSED_DATA_DIR, exist_ok=True)
 
-        # Path to the raw data pickle file
         pkl_path = os.path.join(RAW_DATA_DIR, 'data.pkl')
         if not os.path.isfile(pkl_path):
             logging.error(f"data.pkl not found at {pkl_path}")
@@ -41,11 +39,9 @@ def main() -> None:
         with open(pkl_path, 'rb') as f:
             data_set = pickle.load(f)
 
-        # Extract images and masks from the loaded dataset
         images = []
         masks = []
         for idx, item in enumerate(data_set):
-            # Ensure image is a PIL Image
             img = item['pixel_values']
             if not isinstance(img, Image.Image):
                 try:
@@ -55,7 +51,6 @@ def main() -> None:
                     continue
             images.append(img)
 
-            # Ensure mask is a 2D numpy array of integer type
             mask = np.array(item['label'])
             if not hasattr(mask, 'dtype') or not hasattr(mask, 'shape'):
                 logging.error(f"Sample {idx}: label is not a numpy array.")
@@ -77,7 +72,6 @@ def main() -> None:
             logging.error(f"Mismatch between images and masks after parsing: {len(images)} images, {len(masks)} masks.")
             raise ValueError("Mismatch between images and masks after parsing.")
 
-        # Split indices for train, val, and test sets
         indices = list(range(len(images)))
         train_idx, valtest_idx = train_test_split(indices, test_size=0.2, random_state=42)
         val_idx, test_idx = train_test_split(valtest_idx, test_size=0.5, random_state=42)
@@ -89,26 +83,22 @@ def main() -> None:
         }
 
 
-        # Process and save each split
         for split, idxs in splits.items():
             split_img_dir = os.path.join(PROCESSED_DATA_DIR, split, 'images')
             split_mask_dir = os.path.join(PROCESSED_DATA_DIR, split, 'masks')
             os.makedirs(split_img_dir, exist_ok=True)
             os.makedirs(split_mask_dir, exist_ok=True)
 
-            # Filter out-of-range indices
             valid_idxs = [i for i in idxs if i < len(images) and i < len(masks)]
             if len(valid_idxs) < len(idxs):
                 logging.warning(f"Some indices in split '{split}' were out of range and have been removed.")
 
-            # Create dataset for this split
             dataset = SemanticSegmentationDataset(
                 [images[i] for i in valid_idxs],
                 [masks[i] for i in valid_idxs],
                 ADE_MEAN, ADE_STD, is_train=(split=='train'), from_memory=True
             )
 
-            # Save each image and mask in the split
             for i, sample in enumerate(dataset):
                 try:
                     img = Image.fromarray(sample.original_image).resize(IMAGE_SIZE)

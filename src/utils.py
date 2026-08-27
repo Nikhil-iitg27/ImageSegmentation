@@ -4,9 +4,42 @@ Utility functions for logging, visualization, and reproducibility.
 """
 
 import os
+import csv
 import random
 import numpy as np
 import torch
+
+# Fixed column order for results/results.csv. One row per training epoch (row_type="epoch")
+# or per evaluation run (row_type="test") -- see append_result_row's docstring.
+RESULTS_CSV_FIELDS = [
+    "run_id", "row_type", "epoch", "timestamp",
+    "iteration_100_loss", "epoch_end_train_loss",
+    "mean_dice", "mean_f1_beta0.5", "mean_iou",
+    "new_best_checkpoint", "checkpoint_used", "val_max_batches",
+]
+
+
+def append_result_row(row: dict, csv_path):
+    """
+    Appends one row to the append-only results CSV (creating it with a header if needed).
+    `row` may omit any of RESULTS_CSV_FIELDS -- missing keys are written blank.
+
+    row_type="epoch" (src.train.train_model, one per epoch): epoch, iteration_100_loss,
+    epoch_end_train_loss, mean_dice/mean_f1_beta0.5/mean_iou, new_best_checkpoint,
+    val_max_batches populated.
+
+    row_type="test" (evaluate_model.py, one per evaluation run): mean_dice/mean_f1_beta0.5/
+    mean_iou, checkpoint_used, epoch populated.
+    """
+    import logging
+    os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+    file_exists = os.path.isfile(csv_path) and os.path.getsize(csv_path) > 0
+    with open(csv_path, "a", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=RESULTS_CSV_FIELDS)
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow({field: row.get(field, "") for field in RESULTS_CSV_FIELDS})
+    logging.info(f"Appended {row.get('row_type', 'result')} row to {csv_path}")
 
 
 def set_seed(seed=42):

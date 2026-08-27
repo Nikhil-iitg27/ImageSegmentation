@@ -17,13 +17,15 @@ MODEL_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'models')
 CHECKPOINT_DIR = os.path.join(MODEL_DIR, 'checkpoints')
 LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'logs')
 
+# Append-only per-epoch/per-evaluation metrics log; see src/plot_results.py to render it.
+RESULTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'results')
+RESULTS_CSV = os.path.join(RESULTS_DIR, 'results.csv')
 
-# Pretrained checkpoint (matches the base model actually finetuned in notebooks/Project.ipynb)
+
 PRETRAINED_CHECKPOINT = "facebook/mask2former-swin-large-ade-semantic"
 
-# Class labels (IIT-H driving dataset, 40 classes, matches id2label built in
-# notebooks/Project.ipynb from the dataset's Label metadata). Mask2Former adds its own
-# internal "no object" class on top of this at the model level.
+# IIT-H driving dataset, 40 classes. Mask2Former adds its own internal "no object" class on
+# top of this at the model level.
 ID2LABEL = {
     0: 'road', 1: 'parking', 2: 'drivable fallback', 3: 'sidewalk', 4: 'rail track',
     5: 'non-drivable fallback', 6: 'person', 7: 'animal', 8: 'rider', 9: 'motorcycle',
@@ -37,9 +39,9 @@ ID2LABEL = {
 LABEL2ID = {label: id_ for id_, label in ID2LABEL.items()}
 
 # Hyperparameters (update as needed)
-NUM_CLASSES = len(ID2LABEL)  # 40 — see ID2LABEL above; NOT the previous placeholder value of 21
+NUM_CLASSES = len(ID2LABEL)
 BATCH_SIZE = 8
-NUM_EPOCHS = 5  # matches the notebook's documented baseline run (train_model(..., num_epochs=5))
+NUM_EPOCHS = 5
 LEARNING_RATE = 5e-5
 IMAGE_SIZE = (512, 512)
 SEED = 42
