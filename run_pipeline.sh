@@ -1,22 +1,23 @@
 #!/usr/bin/env bash
 # Single entrypoint for running the full modular pipeline on a fresh Linux GPU box (e.g. a
-# RunPod pod): sets up the uv-managed environment if needed, then runs prepare_data.py,
-# train_model.py, evaluate_model.py in order. See docs/CLAUDE.md / docs/MODULAR_PIPELINE_PLAN.md
-# (local-only, not tracked in git -- see .gitignore) for what each stage does and why.
+# RunPod pod): sets up the uv-managed environment if needed, fetches data/raw/data.pkl from
+# Kaggle if it isn't already present, then runs prepare_data.py, train_model.py,
+# evaluate_model.py in order. See docs/CLAUDE.md / docs/MODULAR_PIPELINE_PLAN.md (local-only,
+# not tracked in git -- see .gitignore) for what each stage does and why.
 #
 # Usage: ./run_pipeline.sh
 #
-# Requires data/raw/data.pkl to already be present (upload it to the pod/volume yourself --
-# this script does not fetch it). Everything else (venv, deps, the three pipeline stages) is
-# handled here.
+# data/raw/data.pkl: if not already present, this script tries to download it from the Kaggle
+# dataset "shayakbhattacharya/finetune" (confirmed to be the same file as the data_s.pkl the
+# notebook itself produces -- same size). This requires a Kaggle API token already configured
+# on this machine (however Kaggle's own site told you to set it up -- a kaggle.json/access_token
+# file under ~/.kaggle/, or KAGGLE_USERNAME/KAGGLE_KEY env vars; the kaggle CLI resolves whichever
+# is present on its own, this script doesn't need to know which). If no token is configured, or
+# the download fails for any reason, this falls back to telling you to transfer the file
+# manually instead of failing with a confusing Kaggle stack trace.
 set -euo pipefail
 
 cd "$(dirname "$0")"
-
-if [ ! -f data/raw/data.pkl ]; then
-    echo "ERROR: data/raw/data.pkl not found. Upload it to this machine before running." >&2
-    exit 1
-fi
 
 if ! command -v uv >/dev/null 2>&1; then
     echo "== Installing uv =="
@@ -35,6 +36,33 @@ echo "== Installing dependencies =="
 UV_HTTP_TIMEOUT=600 uv pip install -r requirements.txt -p .venv
 
 PYTHON=.venv/bin/python
+
+if [ ! -f data/raw/data.pkl ]; then
+    echo "== data/raw/data.pkl not found -- attempting to fetch from Kaggle =="
+    uv pip install kaggle -p .venv
+    mkdir -p data/raw
+
+    if .venv/bin/kaggle datasets download -d shayakbhattacharya/finetune -p data/raw --unzip; then
+        # The file's name inside the Kaggle dataset isn't guaranteed to be data.pkl (the
+        # notebook that produced it saves it as data_s.pkl) -- find whatever .pkl landed and
+        # move it to the exact path prepare_data.py expects.
+        if [ ! -f data/raw/data.pkl ]; then
+            found="$(find data/raw -maxdepth 3 -iname '*.pkl' ! -name 'data.pkl' | head -n 1)"
+            if [ -n "$found" ]; then
+                echo "Found $found -- moving to data/raw/data.pkl"
+                mv "$found" data/raw/data.pkl
+            fi
+        fi
+    fi
+
+    if [ ! -f data/raw/data.pkl ]; then
+        echo "ERROR: data/raw/data.pkl still not found after attempting Kaggle download." >&2
+        echo "Either configure a Kaggle API token on this machine and re-run, or transfer" >&2
+        echo "data.pkl here manually (see docs/RUNPOD_GUIDE.md step 4)." >&2
+        exit 1
+    fi
+    echo "== data/raw/data.pkl ready (from Kaggle) =="
+fi
 
 echo "== nvidia-smi =="
 nvidia-smi || echo "(nvidia-smi not available -- continuing, but training will be very slow/impossible without a GPU)"
